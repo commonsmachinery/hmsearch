@@ -19,3 +19,10 @@
 *.exe
 *.out
 *.app
+
+hm_dump
+hm_initdb
+hm_insert
+hm_lookup
+
+*~
