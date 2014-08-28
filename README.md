@@ -21,8 +21,7 @@ Then there should be a configure script, but for now just hit `make`.
 Library usage
 -------------
 
-TODO - but it is pretty straight-forward, and looking at the code for
-the tools should help understanding it.
+See the documentation in `hmsearch.h`
 
 
 Tool usage
@@ -70,9 +69,10 @@ larger spaces of full HmSearch.
 Hashes must be an even number of bytes.
 
 This code will degrade once the probability of several hashes sharing
-the same partition value goes about 0.1, perhaps.  To handle that
-case, the database need to be tuned to align records so that each
-append of a hash doesn't always require moving the whole record.
+the same partition value goes above perhaps 0.1.  To handle that case,
+the HmSearch::init() need to be extended to tune the database to align
+records so that each append of a hash doesn't always require moving
+the whole record.
 
 There's also other changes that can be done to optimise this, but the
 code works pretty well at least for 25M 256-bit hashes on a regular

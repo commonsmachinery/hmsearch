@@ -19,9 +19,11 @@ int main(int argc, char **argv)
     }
 
     const char *path = argv[1];
-
-    std::auto_ptr<HmSearch> db(HmSearch::open(path, HmSearch::READ));
+    std::string error_msg;
+    
+    std::auto_ptr<HmSearch> db(HmSearch::open(path, HmSearch::READONLY, &error_msg));
     if (!db.get()) {
+        fprintf(stderr, "%s: error opening %s: %s\n", argv[0], path, error_msg.c_str());
         return 1;
     }
 
@@ -30,13 +32,14 @@ int main(int argc, char **argv)
         for (int i = 2; i < argc; i++) {
             const char *hexhash = argv[i];
 
-            HmSearch::ResultList matches;
+            HmSearch::LookupResultList matches;
             if (!db->lookup(HmSearch::parse_hexhash(hexhash), matches)) {
-                fprintf(stderr, "%s: bad hash: %s\n", argv[0], hexhash);
+                fprintf(stderr, "%s: cannot lookup hash: %s (%s)\n",
+                        argv[0], db->get_last_error(), hexhash);
                 return 1;
             }
 
-            for (HmSearch::ResultList::const_iterator i = matches.begin();
+            for (HmSearch::LookupResultList::const_iterator i = matches.begin();
                  i != matches.end();
                  ++i) {
                 std::cout << HmSearch::format_hexhash(i->hash) << " " << i->distance << std::endl;
@@ -47,13 +50,14 @@ int main(int argc, char **argv)
         // Read hashes from stdin
         std::string hexhash;
         while (std::cin >> hexhash) {
-            HmSearch::ResultList matches;
+            HmSearch::LookupResultList matches;
             if (!db->lookup(HmSearch::parse_hexhash(hexhash), matches)) {
-                fprintf(stderr, "%s: bad hash: %s\n", argv[0], hexhash.c_str());
+                fprintf(stderr, "%s: cannot lookup hash: %s (%s)\n",
+                        argv[0], db->get_last_error(), hexhash.c_str());
                 return 1;
             }
 
-            for (HmSearch::ResultList::const_iterator i = matches.begin();
+            for (HmSearch::LookupResultList::const_iterator i = matches.begin();
                  i != matches.end();
                  ++i) {
                 std::cout << HmSearch::format_hexhash(i->hash) << " " << i->distance << std::endl;

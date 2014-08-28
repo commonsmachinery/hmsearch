@@ -16,6 +16,27 @@
 
 #include "hmsearch.h"
 
+/** The actual implementation of the HmSearch database.
+ *
+ * A difference between this implementation and the HmSearch algorithm
+ * in the paper is that only exact-matches are stored in the database,
+ * not the 1-matches.  The 1-var partitions are instead generated
+ * during lookup.  This drastically reduces database size, which with
+ * Kyoto Cabinet speeds up insertion and probably lookups too.
+ *
+ * The database contains some setting records controlling the
+ * operation:
+ *
+ * _hb: hash bits
+ * _me: max errors
+ *
+ * These can't be changed once the database has been initialised.
+ *
+ * Each partition is stored as a key on the following format:
+ *  Byte 0: 'P'
+ *  Byte 1: Partition number (thus limiting to max error 518)
+ *  Bytes 2-N: Partition bits.
+ */
 class HmSearchImpl : public HmSearch
 {
 public:
@@ -30,16 +51,21 @@ public:
         { }
 
     ~HmSearchImpl() {
-        _db->close();
-        delete _db;
+        close();
     }
     
     bool insert(const hash_string& hash);
     bool lookup(const hash_string& query,
-                std::list<Result>& result,
+                LookupResultList& result,
                 int max_error = -1);
 
+    const char* get_last_error() {
+        return _error.c_str();
+    }
+
     void dump();
+
+    bool close();
 
 private:
     struct Candidate {
@@ -53,11 +79,11 @@ private:
     
     void get_candidates(const hash_string& query, CandidateMap& candidates);
     void add_hash_candidates(CandidateMap& candidates, int match,
-                             const hash_char_t* hashes, size_t length);
+                             const uint8_t* hashes, size_t length);
     bool valid_candidate(const Candidate& candidate);
     int hamming_distance(const hash_string& query, const hash_string& hash);
     
-    int get_partition_key(const hash_string& hash, int partition, hash_char_t *key);
+    int get_partition_key(const hash_string& hash, int partition, uint8_t *key);
 
     kyotocabinet::PolyDB* _db;
     int _hash_bits;
@@ -66,22 +92,30 @@ private:
     int _partitions;
     int _partition_bits;
     int _partition_bytes;
+    std::string _error;
 
     static int one_bits[256];
 };
 
 
-bool HmSearch::init(const char *path,
+bool HmSearch::init(const std::string& path,
                     unsigned hash_bits, unsigned max_error,
-                    double num_hashes)
+                    uint64_t num_hashes,
+                    std::string* error_msg)
 {
+    std::string dummy;
+    if (!error_msg) {
+        error_msg = &dummy;
+        *error_msg = "";
+    }
+
     if (hash_bits == 0 || (hash_bits & 7)) {
-        fprintf(stderr, "invalid hash_bits: %u\n", hash_bits);
+        *error_msg = "invalid hash_bits value";
         return false;
     }
 
-    if (max_error == 0 || max_error >= hash_bits) {
-        fprintf(stderr, "invalid max_error: %u\n", max_error);
+    if (max_error == 0 || max_error >= hash_bits || max_error > 518) {
+        *error_msg = "invalid max_error value";
         return false;
     }
 
@@ -93,54 +127,65 @@ bool HmSearch::init(const char *path,
     int partitions = (max_error + 3) / 2;
     int partition_bits = ceil((double)hash_bits / partitions);
 
-    double hashes_per_partition = std::max(1.0, num_hashes / (int64_t(1) << partition_bits));
+    uint64_t hashes_per_partition = std::max(uint64_t(1), num_hashes / (uint64_t(1) << partition_bits));
 
     // TODO: handle >1 hashes_per_partition by setting suitable
     // alignment to allow efficient append and perhaps even having a
     // metablock structure where the partition record just contains
     // references to blocks that actually holds the hashes.
     
-    double keys = (num_hashes / hashes_per_partition) * partitions;
+    uint64_t keys = (num_hashes / hashes_per_partition) * partitions;
 
     // Limit to 0.5 GB index size, might make this configurable too
     int bucket_size = 6;
     int64_t buckets = std::max(int64_t(keys) / bucket_size, int64_t(512) << 20 / bucket_size);  
 
-    fprintf(stderr, "tuning treedb %s to have %lu buckets\n", path, (unsigned long) buckets);
     db->tune_buckets(buckets);
+
+    // Smaller database and quicker inserts, no big effect on lookups
     db->tune_options(kyotocabinet::HashDB::TLINEAR);
     
     if (!db->open(path, kyotocabinet::BasicDB::OWRITER | kyotocabinet::BasicDB::OCREATE)) {
-        fprintf(stderr, "%s: cannot create or open database\n", path);
+        *error_msg = db->error().message();
         return false;
     }
 
     if (db->count() > 0) {
-        fprintf(stderr, "%s: cannot initialise non-empty database\n", path);
+        *error_msg = "cannot initialise non-empty database";
         return false;
     }
     
     char buf[20];
     snprintf(buf, sizeof(buf), "%u", hash_bits);
     if (!db->set("_hb", buf)) {
-        fprintf(stderr, "%s: error storing hash bits\n", path);
+        *error_msg = db->error().message();
         return false;
     }
 
     snprintf(buf, sizeof(buf), "%u", max_error);
     if (!db->set("_me", buf)) {
-        fprintf(stderr, "%s: error storing max error\n", path);
+        *error_msg = db->error().message();
         return false;
     }
 
-    db->close();
+    if (!db->close()) {
+        *error_msg = db->error().message();
+        return false;
+    }
+    
     return true;
 }
 
 
-HmSearch* HmSearch::open(const char *path, Mode mode)
+HmSearch* HmSearch::open(const std::string& path,
+                         OpenMode mode,
+                         std::string* error_msg)
 {
-    // TODO: check that path ends in kct so we open a tree database.
+    std::string dummy;
+    if (!error_msg) {
+        error_msg = &dummy;
+        *error_msg = "";
+    }
 
     std::auto_ptr<kyotocabinet::PolyDB> db(new kyotocabinet::PolyDB);
     if (!db.get()) {
@@ -150,27 +195,28 @@ HmSearch* HmSearch::open(const char *path, Mode mode)
     // Increase mmap from 64M to 512M
     //db->tune_map(int64_t(512) << 20);
 
-    if (!db->open(path, (mode == READ ?
+    if (!db->open(path, (mode == READONLY ?
                          kyotocabinet::BasicDB::OREADER :
                          kyotocabinet::BasicDB::OWRITER))) {
-        fprintf(stderr, "%s: cannot open database\n", path);
+        *error_msg = db->error().message();
         return NULL;
     }
     
     std::string v;
     unsigned long hash_bits, max_error;
     if (!db->get("_hb", &v) || !(hash_bits = strtoul(v.c_str(), NULL, 10))) {
-        fprintf(stderr, "%s: cannot get hash bits\n", path);
+        *error_msg = db->error().message();
         return NULL;
     }
         
     if (!db->get("_me", &v) || !(max_error = strtoul(v.c_str(), NULL, 10))) {
-        fprintf(stderr, "%s: cannot get max error\n", path);
+        *error_msg = db->error().message();
         return NULL;
     }
 
     HmSearch* hm = new HmSearchImpl(db.get(), hash_bits, max_error);
     if (!hm) {
+        *error_msg = "out of memory";
         return NULL;
     }
 
@@ -182,7 +228,7 @@ HmSearch* HmSearch::open(const char *path, Mode mode)
 HmSearch::hash_string HmSearch::parse_hexhash(const std::string& hexhash)
 {
     int len = hexhash.length() / 2;
-    hash_char_t hash[len];
+    uint8_t hash[len];
     
     for (int i = 0; i < len; i++) {
         char buf[3];
@@ -218,33 +264,48 @@ std::string HmSearch::format_hexhash(const HmSearch::hash_string& hash)
 
 bool HmSearchImpl::insert(const hash_string& hash)
 {
-    hash_char_t key[_partition_bytes + 2];
-    
     if (hash.length() != (size_t) _hash_bytes) {
+        _error = "incorrect hash length";
+        return false;
+    }
+
+    if (!_db) {
+        _error = "database is closed";
         return false;
     }
 
     for (int i = 0; i < _partitions; i++) {
+        uint8_t key[_partition_bytes + 2];
+
         get_partition_key(hash, i, key);
 
         if (!_db->append((const char*) key, _partition_bytes + 2,
                          (const char*) hash.data(), hash.length())) {
+            _error = _db->error().message();
             return false;
         }
     }
 
+    _error = "";
     return true;
 }
 
 
-bool HmSearchImpl::lookup(const hash_string& query, std::list<Result>& result, int reduced_error)
+bool HmSearchImpl::lookup(const hash_string& query,
+                          LookupResultList& result,
+                          int reduced_error)
 {
-    CandidateMap candidates;
-
     if (query.length() != (size_t) _hash_bytes) {
+        _error = "incorrect hash length";
         return false;
     }
 
+    if (!_db) {
+        _error = "database is closed";
+        return false;
+    }
+
+    CandidateMap candidates;
     get_candidates(query, candidates);
 
     for (CandidateMap::const_iterator i = candidates.begin(); i != candidates.end(); ++i) {
@@ -253,10 +314,29 @@ bool HmSearchImpl::lookup(const hash_string& query, std::list<Result>& result, i
 
             if (distance <= _max_error
                 && (reduced_error < 0 || distance <= reduced_error)) {
-                result.push_back(Result(i->first, distance));
+                result.push_back(LookupResult(i->first, distance));
             }
         }
     }
+
+    _error = "";
+    return true;
+}
+
+
+bool HmSearchImpl::close() {
+    if (!_db) {
+        // Already closed
+        return true;
+    }
+
+    if (!_db->close()) {
+        _error = _db->error().message();
+        return false;
+    }
+
+    delete _db;
+    _db = NULL;
 
     return true;
 }
@@ -270,8 +350,8 @@ void HmSearchImpl::dump()
 
     c->jump();
     while (c->get(&key_str, &value_str, true)) {
-        hash_char_t* key = (hash_char_t*) key_str.data();
-        hash_char_t* value = (hash_char_t*) value_str.data();
+        uint8_t* key = (uint8_t*) key_str.data();
+        uint8_t* value = (uint8_t*) value_str.data();
         
         if (key[0] == 'P') {
             std::cout << "Partition "
@@ -297,7 +377,7 @@ void HmSearchImpl::get_candidates(
     const HmSearchImpl::hash_string& query,
     HmSearchImpl::CandidateMap& candidates)
 {
-    hash_char_t key[_partition_bytes + 2];
+    uint8_t key[_partition_bytes + 2];
     
     for (int i = 0; i < _partitions; i++) {
         std::string hashes;
@@ -306,19 +386,19 @@ void HmSearchImpl::get_candidates(
 
         // Get exact matches
         if (_db->get(std::string((const char*) key, _partition_bytes + 2), &hashes)) {
-            add_hash_candidates(candidates, 0, (const hash_char_t*)hashes.data(), hashes.length());
+            add_hash_candidates(candidates, 0, (const uint8_t*)hashes.data(), hashes.length());
         }
 
         // Get 1-variant matches
 
         int pbyte = (i * _partition_bits) / 8;
         for (int pbit = i * _partition_bits; bits > 0; pbit++, bits--) {
-            hash_char_t flip = 1 << (7 - (pbit % 8));
+            uint8_t flip = 1 << (7 - (pbit % 8));
 
             key[pbit / 8 - pbyte + 2] ^= flip;
             
             if (_db->get(std::string((const char*) key, _partition_bytes + 2), &hashes)) {
-                add_hash_candidates(candidates, 1, (const hash_char_t*)hashes.data(), hashes.length());
+                add_hash_candidates(candidates, 1, (const uint8_t*)hashes.data(), hashes.length());
             }
             
             key[pbit / 8 - pbyte + 2] ^= flip;
@@ -329,7 +409,7 @@ void HmSearchImpl::get_candidates(
 
 void HmSearchImpl::add_hash_candidates(
     HmSearchImpl::CandidateMap& candidates, int match,
-    const HmSearch::hash_char_t* hashes, size_t length)
+    const uint8_t* hashes, size_t length)
 {
     for (size_t n = 0; n < length; n += _hash_bytes) {
         hash_string hash = hash_string(hashes + n, _hash_bytes);
@@ -383,7 +463,7 @@ int HmSearchImpl::hamming_distance(
 }
 
 
-int HmSearchImpl::get_partition_key(const hash_string& hash, int partition, hash_char_t *key)
+int HmSearchImpl::get_partition_key(const hash_string& hash, int partition, uint8_t *key)
 {
     int psize, hash_bit, bits_left;
 

@@ -20,9 +20,11 @@ int main(int argc, char **argv)
     }
 
     const char *path = argv[1];
-
-    std::auto_ptr<HmSearch> db(HmSearch::open(path, HmSearch::WRITE));
+    std::string error_msg;
+    
+    std::auto_ptr<HmSearch> db(HmSearch::open(path, HmSearch::READWRITE, &error_msg));
     if (!db.get()) {
+        fprintf(stderr, "%s: error opening %s: %s\n", argv[0], path, error_msg.c_str());
         return 1;
     }
 
@@ -31,7 +33,8 @@ int main(int argc, char **argv)
         for (int i = 2; i < argc; i++) {
             const char *hexhash = argv[i];
             if (!db->insert(HmSearch::parse_hexhash(hexhash))) {
-                fprintf(stderr, "%s: bad hash: %s\n", argv[0], hexhash);
+                fprintf(stderr, "%s: cannot insert hash: %s (%s)\n",
+                        argv[0], db->get_last_error(), hexhash);
             }
         }
     }
@@ -40,9 +43,16 @@ int main(int argc, char **argv)
         std::string hexhash;
         while (std::cin >> hexhash) {
             if (!db->insert(HmSearch::parse_hexhash(hexhash))) {
-                fprintf(stderr, "%s: bad hash: %s\n", argv[0], hexhash.c_str());
+                fprintf(stderr, "%s: cannot insert hash: %s (%s)\n",
+                        argv[0], db->get_last_error(), hexhash.c_str());
             }
         }
+    }
+
+    if (!db->close()) {
+        fprintf(stderr, "%s: error closing database: %s\n",
+                argv[0], db->get_last_error());
+        return 1;
     }
 
     return 0;

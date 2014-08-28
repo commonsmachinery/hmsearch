@@ -15,7 +15,7 @@ int main(int argc, char **argv)
     const char *path;
     unsigned hash_bits;
     unsigned max_error;
-    unsigned long num_hashes;
+    uint64_t num_hashes;
     
     if (argc != 5) {
         fprintf(stderr, "Usage: %s path hash_bits max_error num_hashes\n", argv[0]);
@@ -25,9 +25,11 @@ int main(int argc, char **argv)
     path = argv[1];
     hash_bits = strtoul(argv[2], NULL, 10);
     max_error = strtoul(argv[3], NULL, 10);
-    num_hashes = strtoul(argv[4], NULL, 10);
+    num_hashes = strtoull(argv[4], NULL, 10);
 
-    if (!HmSearch::init(path, hash_bits, max_error, num_hashes)) {
+    std::string error_msg;
+    if (!HmSearch::init(path, hash_bits, max_error, num_hashes, &error_msg)) {
+        fprintf(stderr, "%s: error initalising %s: %s\n", argv[0], path, error_msg.c_str());
         return 1;
     }
 
