@@ -4,8 +4,9 @@ hmsearch
 C++ implementation of hamming distance algorithm HmSearch using Kyoto
 Cabinet.
 
-For a description of the algorithm, see the original paper in the
-`doc` directory.
+The algorithm is described in the paper "HmSearch: An Efficient
+Hamming Distance Query Processing Algorithm" by Xiaoyang Zhang,
+Jianbin Qin, Wei Wang, Yifang Sun and Jiaheng Lu.
 
 
 Installation
@@ -88,10 +89,3 @@ Distributed under an MIT license, please see LICENSE in the top dir.
 
 Contact: dev@commonsmachinery.se
 
-
-Credits
--------
-
-HmSearch was created by Xiaoyang Zhang, Jianbin Qin, Wei Wang, Yifang
-Sun and Jiaheng Lu.  For details on the algorithm and contact emails,
-please see the copy of their paper in the `doc` directory.
