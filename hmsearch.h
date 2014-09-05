@@ -19,10 +19,18 @@
  * The database is closed when the object is deleted.  Until it is closed,
  * any added hashes may not yet have been written to disk.
  *
- * Multiple threads can access the same database object
- * simultaneously, but a database file can only be opened by a single
- * process.  This is a limitation in the underlying Kyoto Cabinet
- * library.
+ * Multiple threads can call HmSearch::insert() and HmSearch::lookup()
+ * on the same database object without locks, but there is a small
+ * risk that any database-level error messages will not be correctly
+ * reported back (a limitation in Kyoto Cabinet).  However, if there
+ * are errors on that level, it would usually affect all operations
+ * similarly anyway.
+ *
+ * HmSearch::close() is not thread-safe, so the caller must ensure
+ * that no inserts or lookups are in progress.
+ *
+ * A database file can only be opened by a single process.  This is a
+ * limitation in the underlying Kyoto Cabinet library.
  */
 class HmSearch
 {
@@ -110,9 +118,15 @@ public:
      * No check is made if the hash already exists in the database,
      * so this may result in duplicate records.
      *
+     * Parameters:
+     *  - hash:      The hash to insert, as raw bytes
+     *  - error_msg: if provided, will be set to an string describing any
+     *               error, or to an empty string if no error occurred.
+     *
      * Returns true if the insert succeded, false on any error.
      */
-    virtual bool insert(const hash_string& hash) = 0;
+    virtual bool insert(const hash_string& hash,
+                        std::string* error_msg = NULL) = 0;
 
     /** Lookup a hash in the database, returning a list of matches.
      *
@@ -125,27 +139,31 @@ public:
      *  - max_error: if >= 0, reduce the maximum accepted error
      *               from the database default
      *
+     *  - error_msg: if provided, will be set to an string describing any
+     *               error, or to an empty string if no error occurred.
+     *
      * Returns true if the lookup could be performed (even if no
      * hashes were found), false if an error occurred.
      */
     virtual bool lookup(const hash_string& query,
                         LookupResultList& result,
-                        int max_error = -1) = 0;
+                        int max_error = -1,
+                        std::string* error_msg = NULL) = 0;
 
-    /** Return the error message from the last insert/lookup operation, if any.
+    /** Explicitly sync and close the database file.
+     *
+     * Parameter:
+     *  - error_msg: if provided, will be set to an string describing any
+     *               error, or to an empty string if no error occurred.
+     *
+     * Returns true if all went well, false on errors.
      */
-    virtual const char* get_last_error() = 0;
+    virtual bool close(std::string* error_msg = NULL) = 0;
 
     /** Dump the structure of the database on stdout.
      * This is only useful for debugging the library itself.
      */
     virtual void dump() = 0;
-
-    /** Explicitly sync and close the database file.
-     *
-     * Returns true if all went well, false on errors.
-     */
-    virtual bool close() = 0;
 
     /** Delete the database object, syncing and closing the database
      * file if not already done.

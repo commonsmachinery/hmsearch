@@ -32,9 +32,9 @@ int main(int argc, char **argv)
         // Insert hashes from command line
         for (int i = 2; i < argc; i++) {
             const char *hexhash = argv[i];
-            if (!db->insert(HmSearch::parse_hexhash(hexhash))) {
+            if (!db->insert(HmSearch::parse_hexhash(hexhash), &error_msg)) {
                 fprintf(stderr, "%s: cannot insert hash: %s (%s)\n",
-                        argv[0], db->get_last_error(), hexhash);
+                        argv[0], error_msg.c_str(), hexhash);
             }
         }
     }
@@ -42,16 +42,16 @@ int main(int argc, char **argv)
         // Read hashes from stdin
         std::string hexhash;
         while (std::cin >> hexhash) {
-            if (!db->insert(HmSearch::parse_hexhash(hexhash))) {
+            if (!db->insert(HmSearch::parse_hexhash(hexhash), &error_msg)) {
                 fprintf(stderr, "%s: cannot insert hash: %s (%s)\n",
-                        argv[0], db->get_last_error(), hexhash.c_str());
+                        argv[0], error_msg.c_str(), hexhash.c_str());
             }
         }
     }
 
-    if (!db->close()) {
+    if (!db->close(&error_msg)) {
         fprintf(stderr, "%s: error closing database: %s\n",
-                argv[0], db->get_last_error());
+                argv[0], error_msg.c_str());
         return 1;
     }
 

@@ -54,18 +54,17 @@ public:
         close();
     }
     
-    bool insert(const hash_string& hash);
+    bool insert(const hash_string& hash,
+                std::string* error_msg = NULL);
+    
     bool lookup(const hash_string& query,
                 LookupResultList& result,
-                int max_error = -1);
+                int max_error = -1,
+                std::string* error_msg = NULL);
 
-    const char* get_last_error() {
-        return _error.c_str();
-    }
+    bool close(std::string* error_msg = NULL);
 
     void dump();
-
-    bool close();
 
 private:
     struct Candidate {
@@ -92,7 +91,6 @@ private:
     int _partitions;
     int _partition_bits;
     int _partition_bytes;
-    std::string _error;
 
     static int one_bits[256];
 };
@@ -106,8 +104,8 @@ bool HmSearch::init(const std::string& path,
     std::string dummy;
     if (!error_msg) {
         error_msg = &dummy;
-        *error_msg = "";
     }
+    *error_msg = "";
 
     if (hash_bits == 0 || (hash_bits & 7)) {
         *error_msg = "invalid hash_bits value";
@@ -184,8 +182,8 @@ HmSearch* HmSearch::open(const std::string& path,
     std::string dummy;
     if (!error_msg) {
         error_msg = &dummy;
-        *error_msg = "";
     }
+    *error_msg = "";
 
     std::auto_ptr<kyotocabinet::PolyDB> db(new kyotocabinet::PolyDB);
     if (!db.get()) {
@@ -262,15 +260,22 @@ std::string HmSearch::format_hexhash(const HmSearch::hash_string& hash)
 
 
 
-bool HmSearchImpl::insert(const hash_string& hash)
+bool HmSearchImpl::insert(const hash_string& hash,
+                          std::string* error_msg)
 {
+    std::string dummy;
+    if (!error_msg) {
+        error_msg = &dummy;
+    }
+    *error_msg = "";
+
     if (hash.length() != (size_t) _hash_bytes) {
-        _error = "incorrect hash length";
+        *error_msg = "incorrect hash length";
         return false;
     }
 
     if (!_db) {
-        _error = "database is closed";
+        *error_msg = "database is closed";
         return false;
     }
 
@@ -281,27 +286,33 @@ bool HmSearchImpl::insert(const hash_string& hash)
 
         if (!_db->append((const char*) key, _partition_bytes + 2,
                          (const char*) hash.data(), hash.length())) {
-            _error = _db->error().message();
+            *error_msg = _db->error().message();
             return false;
         }
     }
 
-    _error = "";
     return true;
 }
 
 
 bool HmSearchImpl::lookup(const hash_string& query,
                           LookupResultList& result,
-                          int reduced_error)
+                          int reduced_error,
+                          std::string* error_msg)
 {
+    std::string dummy;
+    if (!error_msg) {
+        error_msg = &dummy;
+    }
+    *error_msg = "";
+
     if (query.length() != (size_t) _hash_bytes) {
-        _error = "incorrect hash length";
+        *error_msg = "incorrect hash length";
         return false;
     }
 
     if (!_db) {
-        _error = "database is closed";
+        *error_msg = "database is closed";
         return false;
     }
 
@@ -319,19 +330,25 @@ bool HmSearchImpl::lookup(const hash_string& query,
         }
     }
 
-    _error = "";
     return true;
 }
 
 
-bool HmSearchImpl::close() {
+bool HmSearchImpl::close(std::string* error_msg)
+{
+    std::string dummy;
+    if (!error_msg) {
+        error_msg = &dummy;
+    }
+    *error_msg = "";
+
     if (!_db) {
         // Already closed
         return true;
     }
 
     if (!_db->close()) {
-        _error = _db->error().message();
+        *error_msg = _db->error().message();
         return false;
     }
 

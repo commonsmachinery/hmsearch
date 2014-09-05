@@ -33,9 +33,9 @@ int main(int argc, char **argv)
             const char *hexhash = argv[i];
 
             HmSearch::LookupResultList matches;
-            if (!db->lookup(HmSearch::parse_hexhash(hexhash), matches)) {
+            if (!db->lookup(HmSearch::parse_hexhash(hexhash), matches, -1, &error_msg)) {
                 fprintf(stderr, "%s: cannot lookup hash: %s (%s)\n",
-                        argv[0], db->get_last_error(), hexhash);
+                        argv[0], error_msg.c_str(), hexhash);
                 return 1;
             }
 
@@ -51,9 +51,9 @@ int main(int argc, char **argv)
         std::string hexhash;
         while (std::cin >> hexhash) {
             HmSearch::LookupResultList matches;
-            if (!db->lookup(HmSearch::parse_hexhash(hexhash), matches)) {
+            if (!db->lookup(HmSearch::parse_hexhash(hexhash), matches, -1, &error_msg)) {
                 fprintf(stderr, "%s: cannot lookup hash: %s (%s)\n",
-                        argv[0], db->get_last_error(), hexhash.c_str());
+                        argv[0], error_msg.c_str(), hexhash.c_str());
                 return 1;
             }
 
