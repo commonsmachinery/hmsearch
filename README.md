@@ -14,7 +14,7 @@ Installation
 
 Ensure that Kyoto Cabinet is installed. On Ubuntu:
 
-    apt-get install libkyotocabinet-dev kyotocabinet-util
+    apt-get install libkyotocabinet-dev kyotocabinet-utils
 
 Then there should be a configure script, but for now just hit `make`.
 
