@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset='utf-8'>
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <meta name="viewport" content="width=640">
+
+    <link rel="stylesheet" href="stylesheets/core.css" media="screen">
+    <link rel="stylesheet" href="stylesheets/mobile.css" media="handheld, only screen and (max-device-width:640px)">
+    <link rel="stylesheet" href="stylesheets/pygment_trac.css">
+
+    <script type="text/javascript" src="javascripts/modernizr.js"></script>
+    <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js"></script>
+    <script type="text/javascript" src="javascripts/headsmart.min.js"></script>
+    <script type="text/javascript">
+      $(document).ready(function () {
+        $('#main_content').headsmart()
+      })
+    </script>
+    <title>Hmsearch by commonsmachinery</title>
+  </head>
+
+  <body>
+    <a id="forkme_banner" href="https://github.com/commonsmachinery/hmsearch">View on GitHub</a>
+    <div class="shell">
+
+      <header>
+        <span class="ribbon-outer">
+          <span class="ribbon-inner">
+            <h1>Hmsearch</h1>
+            <h2>C++ implementation of hamming distance algorithm HmSearch using Kyoto Cabinet</h2>
+          </span>
+          <span class="left-tail"></span>
+          <span class="right-tail"></span>
+        </span>
+      </header>
+
+      <section id="downloads">
+        <span class="inner">
+          <a href="https://github.com/commonsmachinery/hmsearch/zipball/master" class="zip"><em>download</em> .ZIP</a><a href="https://github.com/commonsmachinery/hmsearch/tarball/master" class="tgz"><em>download</em> .TGZ</a>
+        </span>
+      </section>
+
+
+      <span class="banner-fix"></span>
+
+
+      <section id="main_content">
+        <h1>
+<a name="hmsearch" class="anchor" href="#hmsearch"><span class="octicon octicon-link"></span></a>hmsearch</h1>
+
+<p>C++ implementation of hamming distance algorithm HmSearch using Kyoto
+Cabinet.</p>
+
+<p>The algorithm is described in the paper "HmSearch: An Efficient
+Hamming Distance Query Processing Algorithm" by Xiaoyang Zhang,
+Jianbin Qin, Wei Wang, Yifang Sun and Jiaheng Lu.</p>
+
+<h2>
+<a name="installation" class="anchor" href="#installation"><span class="octicon octicon-link"></span></a>Installation</h2>
+
+<p>Ensure that Kyoto Cabinet is installed. On Ubuntu:</p>
+
+<pre><code>apt-get install libkyotocabinet-dev kyotocabinet-utils
+</code></pre>
+
+<p>Then there should be a configure script, but for now just hit <code>make</code>.</p>
+
+<h2>
+<a name="library-usage" class="anchor" href="#library-usage"><span class="octicon octicon-link"></span></a>Library usage</h2>
+
+<p>See the documentation in <code>hmsearch.h</code></p>
+
+<h2>
+<a name="tool-usage" class="anchor" href="#tool-usage"><span class="octicon octicon-link"></span></a>Tool usage</h2>
+
+<p>Create a new database, providing hash size in bits, the max error
+(hamming distance), and the expected number of hashes in the
+database.  E.g.:</p>
+
+<pre><code>./hm_initdb hashes.kch 256 10 100000000
+</code></pre>
+
+<p>Add hashes with <code>hm_insert</code>, either providing them on the command line
+or on stdin:</p>
+
+<pre><code>./hm_insert hashes.kch 6E6FB315FA8C43FE9C2687D5BE14575ABB7252104236747D571B97E003563DF0
+./hm_insert hashes.kch &lt; list-of-hashes
+</code></pre>
+
+<p>Lookup hashes with <code>hm_insert</code>, again providing a list of hashes on
+the command line or on stdin:</p>
+
+<pre><code>./hm_lookup hashes.kch 6F6FB315FA8C43FE9C2687D5BE14575ABB7252104236747D571B97E003563DF0
+./hm_lookup hashes.kch &lt; list-of-query-hashes
+</code></pre>
+
+<p>It will output all found hashes together with the hamming distance.</p>
+
+<p><code>hm_dump</code> outputs the internal structure of the database, and is only
+useful for debugging.  <code>kchashmgr inform -st</code> can be used to get
+further information about the underlying database.</p>
+
+<p>To help testing and tuning, there are a few Python tools:</p>
+
+<pre><code>./gen_hashes.py HASH_SIZE NUM_HASHES | ./hm_insert hashes.kch
+./select.py NUM_LINES &lt; list-of-hashes | ./hm_lookup hashes.kch
+./select.py NUM_LINES &lt; list-of-hashes | ./flip.py BITS_TO_FLIP | ./hm_lookup hashes.kch
+</code></pre>
+
+<h2>
+<a name="limitations" class="anchor" href="#limitations"><span class="octicon octicon-link"></span></a>Limitations</h2>
+
+<p>The code only supports a binary value space (i.e. 0 and 1), not the
+larger spaces of full HmSearch.</p>
+
+<p>Hashes must be an even number of bytes.</p>
+
+<p>This code will degrade once the probability of several hashes sharing
+the same partition value goes above perhaps 0.1.  To handle that case,
+the HmSearch::init() need to be extended to tune the database to align
+records so that each append of a hash doesn't always require moving
+the whole record.</p>
+
+<p>There's also other changes that can be done to optimise this, but the
+code works pretty well at least for 25M 256-bit hashes on a regular
+laptop with SSD.</p>
+
+<h2>
+<a name="license" class="anchor" href="#license"><span class="octicon octicon-link"></span></a>License</h2>
+
+<p>Copyright 2014 Commons Machinery <a href="http://commonsmachinery.se/">http://commonsmachinery.se/</a></p>
+
+<p>Distributed under an MIT license, please see LICENSE in the top dir.</p>
+
+<p>Contact: <a href="mailto:dev@commonsmachinery.se">dev@commonsmachinery.se</a></p>
+      </section>
+
+      <footer>
+        <span class="ribbon-outer">
+          <span class="ribbon-inner">
+            <p>this project by <a href="https://github.com/commonsmachinery">commonsmachinery</a> can be found on <a href="https://github.com/commonsmachinery/hmsearch">GitHub</a></p>
+          </span>
+          <span class="left-tail"></span>
+          <span class="right-tail"></span>
+        </span>
+        <p>Generated with <a href="http://pages.github.com">GitHub Pages</a> using Merlot</p>
+        <span class="octocat"></span>
+      </footer>
+
+    </div>
+
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-38814645-4");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+
+  </body>
+</html>
