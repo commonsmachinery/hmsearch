@@ -40,7 +40,7 @@
 class HmSearchImpl : public HmSearch
 {
 public:
-    HmSearchImpl(kyotocabinet::PolyDB* db, int hash_bits, int max_error)
+    HmSearchImpl(kyotocabinet::TreeDB* db, int hash_bits, int max_error)
         : _db(db)
         , _hash_bits(hash_bits)
         , _max_error(max_error)
@@ -84,7 +84,7 @@ private:
     
     int get_partition_key(const hash_string& hash, int partition, uint8_t *key);
 
-    kyotocabinet::PolyDB* _db;
+    kyotocabinet::TreeDB* _db;
     int _hash_bits;
     int _max_error;
     int _hash_bytes;
@@ -117,7 +117,7 @@ bool HmSearch::init(const std::string& path,
         return false;
     }
 
-    std::auto_ptr<kyotocabinet::HashDB> db(new kyotocabinet::HashDB);
+    std::auto_ptr<kyotocabinet::TreeDB> db(new kyotocabinet::TreeDB);
     if (!db.get()) {
         return false;
     }
@@ -138,10 +138,10 @@ bool HmSearch::init(const std::string& path,
     int bucket_size = 6;
     int64_t buckets = std::max(int64_t(keys) / bucket_size, int64_t(512) << 20 / bucket_size);  
 
-    db->tune_buckets(buckets);
+    db->tune_buckets(buckets*2);
 
     // Smaller database and quicker inserts, no big effect on lookups
-    db->tune_options(kyotocabinet::HashDB::TLINEAR);
+    db->tune_options(kyotocabinet::TreeDB::TLINEAR);
     
     if (!db->open(path, kyotocabinet::BasicDB::OWRITER | kyotocabinet::BasicDB::OCREATE)) {
         *error_msg = db->error().message();
@@ -185,7 +185,7 @@ HmSearch* HmSearch::open(const std::string& path,
     }
     *error_msg = "";
 
-    std::auto_ptr<kyotocabinet::PolyDB> db(new kyotocabinet::PolyDB);
+    std::auto_ptr<kyotocabinet::TreeDB> db(new kyotocabinet::TreeDB);
     if (!db.get()) {
         return NULL;
     }
