@@ -4,7 +4,7 @@ CXX = g++
 CFLAGS = -g -Wall -D_FILE_OFFSET_BITS=64
 CXXFLAGS = $(CFLAGS)
 LDFLAGS = -g
-LIBS = -lm -lkyotocabinet
+LIBS = -lm -lleveldb
 
 bin-objs = hm_initdb.o hm_dump.o hm_insert.o hm_lookup.o
 common-objs = hmsearch.o

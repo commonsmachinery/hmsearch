@@ -20,17 +20,13 @@
  * any added hashes may not yet have been written to disk.
  *
  * Multiple threads can call HmSearch::insert() and HmSearch::lookup()
- * on the same database object without locks, but there is a small
- * risk that any database-level error messages will not be correctly
- * reported back (a limitation in Kyoto Cabinet).  However, if there
- * are errors on that level, it would usually affect all operations
- * similarly anyway.
+ * on the same database object without locks.
  *
  * HmSearch::close() is not thread-safe, so the caller must ensure
  * that no inserts or lookups are in progress.
  *
  * A database file can only be opened by a single process.  This is a
- * limitation in the underlying Kyoto Cabinet library.
+ * limitation in the underlying LevelDB library.
  */
 class HmSearch
 {
@@ -64,7 +60,7 @@ public:
      *
      * Parameters:
      *
-     *  - path:       file path, typically ending in ".kch"
+     *  - path:       file path, typically ending in ".ldb"
      *
      *  - hash_bits:  number of bits in the hash (must be a multiple of 8)
      *
@@ -89,7 +85,7 @@ public:
      * 
      * Parameters:
      *
-     *  - path: file path, typically ending in ".kch"
+     *  - path: file path, typically ending in ".ldb"
      *
      *  - mode: database open mode
      *

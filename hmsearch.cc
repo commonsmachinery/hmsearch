@@ -11,8 +11,10 @@
 
 #include <memory>
 #include <algorithm>
+#include <map>
+#include <iostream>
 
-#include <kcdbext.h>
+#include <leveldb/db.h>
 
 #include "hmsearch.h"
 
@@ -21,8 +23,8 @@
  * A difference between this implementation and the HmSearch algorithm
  * in the paper is that only exact-matches are stored in the database,
  * not the 1-matches.  The 1-var partitions are instead generated
- * during lookup.  This drastically reduces database size, which with
- * Kyoto Cabinet speeds up insertion and probably lookups too.
+ * during lookup.  This drastically reduces database size, which
+ * speeds up insertion and probably lookups too.
  *
  * The database contains some setting records controlling the
  * operation:
@@ -40,7 +42,7 @@
 class HmSearchImpl : public HmSearch
 {
 public:
-    HmSearchImpl(kyotocabinet::PolyDB* db, int hash_bits, int max_error)
+    HmSearchImpl(leveldb::DB* db, int hash_bits, int max_error)
         : _db(db)
         , _hash_bits(hash_bits)
         , _max_error(max_error)
@@ -84,7 +86,7 @@ private:
     
     int get_partition_key(const hash_string& hash, int partition, uint8_t *key);
 
-    kyotocabinet::PolyDB* _db;
+    leveldb::DB* _db;
     int _hash_bits;
     int _max_error;
     int _hash_bytes;
@@ -117,60 +119,42 @@ bool HmSearch::init(const std::string& path,
         return false;
     }
 
-    std::auto_ptr<kyotocabinet::HashDB> db(new kyotocabinet::HashDB);
-    if (!db.get()) {
-        return false;
-    }
-
-    int partitions = (max_error + 3) / 2;
-    int partition_bits = ceil((double)hash_bits / partitions);
-
-    uint64_t hashes_per_partition = std::max(uint64_t(1), num_hashes / (uint64_t(1) << partition_bits));
+    leveldb::DB *db;
 
     // TODO: handle >1 hashes_per_partition by setting suitable
     // alignment to allow efficient append and perhaps even having a
     // metablock structure where the partition record just contains
     // references to blocks that actually holds the hashes.
-    
-    uint64_t keys = (num_hashes / hashes_per_partition) * partitions;
 
-    // Limit to 0.5 GB index size, might make this configurable too
-    int bucket_size = 6;
-    int64_t buckets = std::max(int64_t(keys) / bucket_size, int64_t(512) << 20 / bucket_size);  
+    leveldb::Options options;
+    options.create_if_missing = true;
+    options.error_if_exists = true;
 
-    db->tune_buckets(buckets);
+    leveldb::Status status;
 
-    // Smaller database and quicker inserts, no big effect on lookups
-    db->tune_options(kyotocabinet::HashDB::TLINEAR);
-    
-    if (!db->open(path, kyotocabinet::BasicDB::OWRITER | kyotocabinet::BasicDB::OCREATE)) {
-        *error_msg = db->error().message();
+    status = leveldb::DB::Open(options, path, &db);
+    if (!status.ok()) {
+        *error_msg = status.ToString();
         return false;
     }
 
-    if (db->count() > 0) {
-        *error_msg = "cannot initialise non-empty database";
-        return false;
-    }
-    
     char buf[20];
     snprintf(buf, sizeof(buf), "%u", hash_bits);
-    if (!db->set("_hb", buf)) {
-        *error_msg = db->error().message();
+    status = db->Put(leveldb::WriteOptions(), "_hb", buf);
+    if (!status.ok()) {
+        *error_msg = status.ToString();
         return false;
     }
 
     snprintf(buf, sizeof(buf), "%u", max_error);
-    if (!db->set("_me", buf)) {
-        *error_msg = db->error().message();
+    status = db->Put(leveldb::WriteOptions(), "_me", buf);
+    if (!status.ok()) {
+        *error_msg = status.ToString();
         return false;
     }
 
-    if (!db->close()) {
-        *error_msg = db->error().message();
-        return false;
-    }
-    
+    delete db;
+
     return true;
 }
 
@@ -185,40 +169,37 @@ HmSearch* HmSearch::open(const std::string& path,
     }
     *error_msg = "";
 
-    std::auto_ptr<kyotocabinet::PolyDB> db(new kyotocabinet::PolyDB);
-    if (!db.get()) {
-        return NULL;
-    }
+    leveldb::DB *db;
 
-    // Increase mmap from 64M to 512M
-    //db->tune_map(int64_t(512) << 20);
+    leveldb::Options options;
+    leveldb::Status status;
 
-    if (!db->open(path, (mode == READONLY ?
-                         kyotocabinet::BasicDB::OREADER :
-                         kyotocabinet::BasicDB::OWRITER))) {
-        *error_msg = db->error().message();
+    status = leveldb::DB::Open(options, path, &db);
+    if (!status.ok()) { 
+        *error_msg = status.ToString();
         return NULL;
     }
     
     std::string v;
     unsigned long hash_bits, max_error;
-    if (!db->get("_hb", &v) || !(hash_bits = strtoul(v.c_str(), NULL, 10))) {
-        *error_msg = db->error().message();
-        return NULL;
-    }
-        
-    if (!db->get("_me", &v) || !(max_error = strtoul(v.c_str(), NULL, 10))) {
-        *error_msg = db->error().message();
+    status = db->Get(leveldb::ReadOptions(), "_hb", &v);
+    if (!status.ok() || !(hash_bits = strtoul(v.c_str(), NULL, 10))) {
+        *error_msg = status.ToString();
         return NULL;
     }
 
-    HmSearch* hm = new HmSearchImpl(db.get(), hash_bits, max_error);
+    status = db->Get(leveldb::ReadOptions(), "_me", &v);
+    if (!status.ok() || !(max_error = strtoul(v.c_str(), NULL, 10))) {
+        *error_msg = status.ToString();
+        return NULL;
+    }
+
+    HmSearch* hm = new HmSearchImpl(db, hash_bits, max_error);
     if (!hm) {
         *error_msg = "out of memory";
         return NULL;
     }
 
-    db.release();
     return hm;
 }
 
@@ -284,9 +265,12 @@ bool HmSearchImpl::insert(const hash_string& hash,
 
         get_partition_key(hash, i, key);
 
-        if (!_db->append((const char*) key, _partition_bytes + 2,
-                         (const char*) hash.data(), hash.length())) {
-            *error_msg = _db->error().message();
+        leveldb::Slice key_slice = leveldb::Slice(reinterpret_cast <char *>(&key), _partition_bytes + 2);
+        leveldb::Slice hash_slice = leveldb::Slice((char *)hash.data(), hash.length());
+
+        leveldb::Status status = _db->Put(leveldb::WriteOptions(), key_slice, hash_slice);
+        if (!status.ok()) {
+            *error_msg = status.ToString();
             return false;
         }
     }
@@ -347,11 +331,6 @@ bool HmSearchImpl::close(std::string* error_msg)
         return true;
     }
 
-    if (!_db->close()) {
-        *error_msg = _db->error().message();
-        return false;
-    }
-
     delete _db;
     _db = NULL;
 
@@ -361,32 +340,30 @@ bool HmSearchImpl::close(std::string* error_msg)
 
 void HmSearchImpl::dump()
 {
-    kyotocabinet::BasicDB::Cursor *c = _db->cursor();
+    leveldb::Iterator *it = _db->NewIterator(leveldb::ReadOptions());
 
-    std::string key_str, value_str;
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        uint8_t key[_partition_bytes + 2];
+        memcpy(&key[0], it->key().data(), it->key().size());
 
-    c->jump();
-    while (c->get(&key_str, &value_str, true)) {
-        uint8_t* key = (uint8_t*) key_str.data();
-        uint8_t* value = (uint8_t*) value_str.data();
+        std::string value_str = std::string(it->value().data(), it->value().size());
         
         if (key[0] == 'P') {
             std::cout << "Partition "
                       << int(key[1])
-                      << format_hexhash(hash_string(key + 2, key_str.length() - 2))
+                      << format_hexhash(hash_string(key + 2, _partition_bytes - 2))
                       << std::endl;
 
             for (long len = value_str.length(); len >= _hash_bytes;
-                 len -= _hash_bytes, value += _hash_bytes) {
+                 len -= _hash_bytes, value_str += _hash_bytes) {
                 std::cout << "    "
-                          << format_hexhash(hash_string(value, _hash_bytes))
+                          << format_hexhash(hash_string((uint8_t *)value_str.data(), _hash_bytes))
                           << std::endl;
             }
             std::cout << std::endl;
         }
     }
 
-    delete c;
 }
 
 
@@ -402,7 +379,10 @@ void HmSearchImpl::get_candidates(
         int bits = get_partition_key(query, i, key);
 
         // Get exact matches
-        if (_db->get(std::string((const char*) key, _partition_bytes + 2), &hashes)) {
+        leveldb::Status status;
+
+        status = _db->Get(leveldb::ReadOptions(), std::string((const char*) key, _partition_bytes + 2), &hashes);
+        if (status.ok()) {
             add_hash_candidates(candidates, 0, (const uint8_t*)hashes.data(), hashes.length());
         }
 
@@ -413,8 +393,10 @@ void HmSearchImpl::get_candidates(
             uint8_t flip = 1 << (7 - (pbit % 8));
 
             key[pbit / 8 - pbyte + 2] ^= flip;
-            
-            if (_db->get(std::string((const char*) key, _partition_bytes + 2), &hashes)) {
+
+            leveldb::Status status;
+            status = _db->Get(leveldb::ReadOptions(), std::string((const char*) key, _partition_bytes + 2), &hashes);
+            if (status.ok()) {
                 add_hash_candidates(candidates, 1, (const uint8_t*)hashes.data(), hashes.length());
             }
             
