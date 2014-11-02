@@ -46,13 +46,6 @@ public:
 
     typedef std::list<LookupResult> LookupResultList;
 
-    /** Database open modes.
-     */
-    enum OpenMode {
-        READONLY,
-        READWRITE
-    };
-
     /** Initialise a new hash database file.
      *
      * The database file should not exist, or if it does it must not
@@ -95,7 +88,6 @@ public:
      * Returns the new object on success, or NULL on error.
      */
     static HmSearch* open(const std::string& path,
-                          OpenMode mode,
                           std::string* error_msg = NULL);
 
 

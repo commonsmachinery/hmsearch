@@ -160,7 +160,6 @@ bool HmSearch::init(const std::string& path,
 
 
 HmSearch* HmSearch::open(const std::string& path,
-                         OpenMode mode,
                          std::string* error_msg)
 {
     std::string dummy;

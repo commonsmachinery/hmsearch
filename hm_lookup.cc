@@ -21,7 +21,7 @@ int main(int argc, char **argv)
     const char *path = argv[1];
     std::string error_msg;
     
-    std::auto_ptr<HmSearch> db(HmSearch::open(path, HmSearch::READONLY, &error_msg));
+    std::auto_ptr<HmSearch> db(HmSearch::open(path, &error_msg));
     if (!db.get()) {
         fprintf(stderr, "%s: error opening %s: %s\n", argv[0], path, error_msg.c_str());
         return 1;
