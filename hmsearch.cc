@@ -184,8 +184,6 @@ HmSearch* HmSearch::open(const std::string& path,
     leveldb::DB *db;
 
     leveldb::Options options;
-    options.block_cache = leveldb::NewLRUCache(256 * 1048576);
-    options.compression = leveldb::kNoCompression;
     leveldb::Status status;
 
     status = leveldb::DB::Open(options, path, &db);
