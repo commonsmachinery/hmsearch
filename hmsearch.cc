@@ -261,13 +261,31 @@ bool HmSearchImpl::insert(const hash_string& hash,
 
     for (int i = 0; i < _partitions; i++) {
         uint8_t key[_partition_bytes + 2];
+        std::string hashes = "";
 
         get_partition_key(hash, i, key);
 
-        leveldb::Slice key_slice = leveldb::Slice(reinterpret_cast <char *>(&key), _partition_bytes + 2);
-        leveldb::Slice hash_slice = leveldb::Slice((char *)hash.data(), hash.length());
+        /*
+         * This makes a Get before Put to concatenate values together. This
+         * could be made more intelligent by keeping a record of the number
+         * of hashes in each bucket and making the key have the form:
+         *
+         * <key>#<sequence>
+         *
+         * This would make it faster to add data since it alleviates needing
+         * to read all data (if it's large), without overly affecting lookup
+         * since keys are guaranteed to be ordered, so seeking from <key>#0
+         * onwards is guaranteed to return all values.
+         */
 
-        leveldb::Status status = _db->Put(leveldb::WriteOptions(), key_slice, hash_slice);
+        leveldb::Status status;
+        status = _db->Get(leveldb::ReadOptions(), std::string((const char*) key, _partition_bytes + 2), &hashes);
+
+        hashes.append((char*)hash.data(), hash.length());
+
+        leveldb::Slice key_slice = leveldb::Slice(reinterpret_cast <char *>(key), _partition_bytes + 2);
+
+        status = _db->Put(leveldb::WriteOptions(), key_slice, hashes);
         if (!status.ok()) {
             *error_msg = status.ToString();
             return false;
@@ -346,17 +364,16 @@ void HmSearchImpl::dump()
         memcpy(&key[0], it->key().data(), it->key().size());
 
         std::string value_str = std::string(it->value().data(), it->value().size());
-        
+
         if (key[0] == 'P') {
             std::cout << "Partition "
                       << int(key[1])
-                      << format_hexhash(hash_string(key + 2, _partition_bytes - 2))
+                      << format_hexhash(hash_string(key + 2, _partition_bytes))
                       << std::endl;
 
-            for (long len = value_str.length(); len >= _hash_bytes;
-                 len -= _hash_bytes, value_str += _hash_bytes) {
+            for (unsigned long len = 0; len < value_str.length(); len += _hash_bytes) {
                 std::cout << "    "
-                          << format_hexhash(hash_string((uint8_t *)value_str.data(), _hash_bytes))
+                          << format_hexhash(hash_string((uint8_t *)value_str.data() + len, _hash_bytes))
                           << std::endl;
             }
             std::cout << std::endl;
