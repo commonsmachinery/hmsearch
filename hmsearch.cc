@@ -14,8 +14,7 @@
 #include <map>
 #include <iostream>
 
-#include <leveldb/db.h>
-#include <leveldb/cache.h>
+#include <pqxx/pqxx>
 
 #include "hmsearch.h"
 
@@ -45,16 +44,16 @@
 class HmSearchImpl : public HmSearch
 {
 public:
-    HmSearchImpl(leveldb::DB* db, int hash_bits, int max_error, int sequence_no)
-        : _db(db)
-        , _hash_bits(hash_bits)
+    HmSearchImpl(std::string connstr, int hash_bits, int max_error)
+        : _hash_bits(hash_bits)
         , _max_error(max_error)
-        , _sequence_no(sequence_no)
         , _hash_bytes((hash_bits + 7) / 8)
         , _partitions((max_error + 3) / 2)
         , _partition_bits(ceil((double)hash_bits / _partitions))
         , _partition_bytes((_partition_bits + 7) / 8 + 1)
-        { }
+    {
+      _db = new pqxx::connection(connstr);
+    }
 
     ~HmSearchImpl() {
         close();
@@ -69,8 +68,6 @@ public:
                 std::string* error_msg = NULL);
 
     bool close(std::string* error_msg = NULL);
-
-    void dump();
 
 private:
     struct Candidate {
@@ -91,10 +88,9 @@ private:
     
     int get_partition_key(const hash_string& hash, int partition, uint8_t *key);
 
-    leveldb::DB* _db;
+    pqxx::connection *_db;
     int _hash_bits;
     int _max_error;
-    int _sequence_no;
     int _hash_bytes;
     int _partitions;
     int _partition_bits;
@@ -125,48 +121,38 @@ bool HmSearch::init(const std::string& path,
         return false;
     }
 
-    leveldb::DB *db;
-
-    // TODO: handle >1 hashes_per_partition by setting suitable
-    // alignment to allow efficient append and perhaps even having a
-    // metablock structure where the partition record just contains
-    // references to blocks that actually holds the hashes.
-
-    leveldb::Options options;
-    options.create_if_missing = true;
-    options.error_if_exists = true;
-
-    leveldb::Status status;
-
-    status = leveldb::DB::Open(options, path, &db);
-    if (!status.ok()) {
-        *error_msg = status.ToString();
-        return false;
+    pqxx::connection db(path);
+    if (!db.is_open()) {
+       *error_msg = "Can't open database";
+       return false;
     }
 
-    char buf[20];
-    snprintf(buf, sizeof(buf), "%u", hash_bits);
-    status = db->Put(leveldb::WriteOptions(), "_hb", buf);
-    if (!status.ok()) {
-        *error_msg = status.ToString();
-        return false;
-    }
+    std::string sql;
+    sql = "INSERT INTO config VALUES ($1, $2)";
+    db.prepare("hash_max", sql);
 
-    snprintf(buf, sizeof(buf), "%u", max_error);
-    status = db->Put(leveldb::WriteOptions(), "_me", buf);
-    if (!status.ok()) {
-        *error_msg = status.ToString();
-        return false;
-    }
+    pqxx::work W(db);
+    sql = "CREATE TABLE config ("\
+          "       hash_bits int,"\
+          "       max_error int)";
+    W.exec(sql);
 
-    snprintf(buf, sizeof(buf), "%u", 1);
-    status = db->Put(leveldb::WriteOptions(), "_se", buf);
-    if (!status.ok()) {
-        *error_msg = status.ToString();
-        return false;
-    }
+    W.prepared("hash_max")(hash_bits)(max_error).exec();
 
-    delete db;
+    sql = "CREATE TABLE hashes ("\
+          "       hash bytea,"\
+          "       partition int,"\
+          "       key bytea)";
+
+    W.exec(sql);
+
+    sql = "CREATE INDEX ix_key ON hashes(key)";
+
+    W.exec(sql);
+
+    W.commit();
+
+    db.disconnect();
 
     return true;
 }
@@ -181,38 +167,30 @@ HmSearch* HmSearch::open(const std::string& path,
     }
     *error_msg = "";
 
-    leveldb::DB *db;
-
-    leveldb::Options options;
-    leveldb::Status status;
-
-    status = leveldb::DB::Open(options, path, &db);
-    if (!status.ok()) { 
-        *error_msg = status.ToString();
-        return NULL;
-    }
-    
-    std::string v;
-    unsigned long hash_bits, max_error, sequence_no;
-    status = db->Get(leveldb::ReadOptions(), "_hb", &v);
-    if (!status.ok() || !(hash_bits = strtoul(v.c_str(), NULL, 10))) {
-        *error_msg = status.ToString();
+    pqxx::connection db(path);
+    if (!db.is_open()) {
+        *error_msg = "Can't open database";
         return NULL;
     }
 
-    status = db->Get(leveldb::ReadOptions(), "_me", &v);
-    if (!status.ok() || !(max_error = strtoul(v.c_str(), NULL, 10))) {
-        *error_msg = status.ToString();
-        return NULL;
-    }
+    std::string sql;
 
-    status = db->Get(leveldb::ReadOptions(), "_se", &v);
-    if (!status.ok() || !(sequence_no = strtoul(v.c_str(), NULL, 10))) {
-        *error_msg = status.ToString();
-        return NULL;
-    }
+    sql = "SELECT max_error, hash_bits FROM config";
+    pqxx::nontransaction n(db);
+    pqxx::result res(n.exec(sql));
 
-    HmSearch* hm = new HmSearchImpl(db, hash_bits, max_error, sequence_no);
+    pqxx::result::const_iterator c = res.begin(); // We retrieve just one row
+
+    unsigned long hash_bits, max_error;
+    max_error = c[0].as<long>();
+    hash_bits = c[1].as<long>();
+
+    /*
+     * Prepare statements for inserts and lookup
+     */
+    db.disconnect();
+
+    HmSearch* hm = new HmSearchImpl(path, hash_bits, max_error);
     if (!hm) {
         *error_msg = "out of memory";
         return NULL;
@@ -273,35 +251,25 @@ bool HmSearchImpl::insert(const hash_string& hash,
         return false;
     }
 
-    if (!_db) {
+    if (!_db->is_open()) {
         *error_msg = "database is closed";
         return false;
     }
 
+    _db->prepare("insert", "INSERT INTO hashes VALUES ($1, $2, $3)");
+    pqxx::work W(*_db);
     for (int i = 0; i < _partitions; i++) {
-        uint8_t key[_partition_bytes + 2 + sizeof(_sequence_no)];
+        uint8_t key[_partition_bytes + 2];
 
         get_partition_key(hash, i, key);
 
-        /*
-         * We're lazy with the sequence_no and only update this on database
-         * close. If the database is not properly closed, this will lead
-         * to lost key-value pairs.
-         */
-        memcpy(&key[_partition_bytes + 2], &_sequence_no, sizeof(_sequence_no));
-        _sequence_no++;
+        pqxx::binarystring key_blob(key, _partition_bytes + 2);
+        pqxx::binarystring hash_blob(hash.data(), hash.length());
 
-        leveldb::Status status;
-
-        leveldb::Slice key_slice = leveldb::Slice(reinterpret_cast <char *>(key), _partition_bytes + 2 + sizeof(_sequence_no));
-        leveldb::Slice hash_slice = leveldb::Slice((char *)hash.data(), hash.length());
-
-        status = _db->Put(leveldb::WriteOptions(), key_slice, hash_slice);
-        if (!status.ok()) {
-            *error_msg = status.ToString();
-            return false;
-        }
+        W.prepared("insert")(hash_blob)(i)(key_blob).exec();
     }
+
+    W.commit();
 
     return true;
 }
@@ -323,7 +291,7 @@ bool HmSearchImpl::lookup(const hash_string& query,
         return false;
     }
 
-    if (!_db) {
+    if (!_db->is_open()) {
         *error_msg = "database is closed";
         return false;
     }
@@ -354,67 +322,31 @@ bool HmSearchImpl::close(std::string* error_msg)
     }
     *error_msg = "";
 
-    if (!_db) {
+    if (!_db->is_open()) {
         // Already closed
         return true;
     }
 
-    char buf[20];
-
-    snprintf(buf, sizeof(buf), "%u", _sequence_no);
-    leveldb::Status status;
-    status = _db->Put(leveldb::WriteOptions(), "_se", buf);
-    if (!status.ok()) {
-        *error_msg = status.ToString();
-        return false;
-    }
-
-    delete _db;
-    _db = NULL;
+    _db->disconnect();
 
     return true;
 }
 
 
-void HmSearchImpl::dump()
-{
-    leveldb::Iterator *it = _db->NewIterator(leveldb::ReadOptions());
-
-    for (it->SeekToFirst(); it->Valid(); it->Next()) {
-        uint8_t key[_partition_bytes + 2];
-        memcpy(&key[0], it->key().data(), it->key().size());
-
-        std::string value_str = std::string(it->value().data(), it->value().size());
-
-        if (key[0] == 'P') {
-            std::cout << "Partition "
-                      << int(key[1])
-                      << format_hexhash(hash_string(key + 2, _partition_bytes))
-                      << "Sequence "
-                      << int(key[_partition_bytes+2])
-                      << std::endl;
-
-            for (unsigned long len = 0; len < value_str.length(); len += _hash_bytes) {
-                std::cout << "    "
-                          << format_hexhash(hash_string((uint8_t *)value_str.data() + len, _hash_bytes))
-                          << std::endl;
-            }
-            std::cout << std::endl;
-        }
-    }
-
-}
-
 HmSearchImpl::hash_string HmSearchImpl::get_multiple_keys(
     uint8_t *key)
 {
     hash_string hashes;
-    leveldb::Slice key_slice = leveldb::Slice(reinterpret_cast <char *>(key), _partition_bytes + 2);
 
-    leveldb::Iterator* it = _db->NewIterator(leveldb::ReadOptions());
-    for (it->Seek(key_slice); it->Valid() && it->key().starts_with(key_slice); it->Next()) {
-        hashes.append(hash_string((uint8_t *)it->value().data(), it->value().size()));
+    pqxx::nontransaction n(*_db);
+    pqxx::binarystring key_blob(key, _partition_bytes + 2);
+    pqxx::result res = n.prepared("select")(key_blob).exec();
+
+    for (pqxx::result::const_iterator c = res.begin(); c != res.end(); ++c) {
+       pqxx::binarystring hash_result(c[0]);
+       hashes.append(hash_string(hash_result.data(), hash_result.size()));
     }
+
     return hashes;
 }
 
@@ -423,6 +355,10 @@ void HmSearchImpl::get_candidates(
     HmSearchImpl::CandidateMap& candidates)
 {
     uint8_t key[_partition_bytes + 2];
+
+    std::string sql;
+    sql = "SELECT hash FROM hashes WHERE key=$1";
+    _db->prepare("select", sql);
     
     for (int i = 0; i < _partitions; i++) {
         hash_string hashes;
@@ -430,7 +366,6 @@ void HmSearchImpl::get_candidates(
         int bits = get_partition_key(query, i, key);
 
         // Get exact matches
-        leveldb::Status status;
 
         hashes = get_multiple_keys(key);
 
@@ -523,7 +458,7 @@ int HmSearchImpl::get_partition_key(const hash_string& hash, int partition, uint
         psize = _partition_bits;
     }
 
-    // Store key identifier and partition number first
+    // Store key partition number first
     key[0] = 'P';
     key[1] = partition;
 

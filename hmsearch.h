@@ -148,11 +148,6 @@ public:
      */
     virtual bool close(std::string* error_msg = NULL) = 0;
 
-    /** Dump the structure of the database on stdout.
-     * This is only useful for debugging the library itself.
-     */
-    virtual void dump() = 0;
-
     /** Delete the database object, syncing and closing the database
      * file if not already done.
      */
