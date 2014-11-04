@@ -6,7 +6,7 @@ CXXFLAGS = $(CFLAGS)
 LDFLAGS = -g
 LIBS = -lm -lpqxx
 
-bin-objs = hm_initdb.o hm_insert.o hm_lookup.o
+bin-objs = hm_initdb.o hm_insert.o hm_lookup.o hm_printcopy.o
 common-objs = hmsearch.o
 
 all: $(bin-objs:%.o=%)

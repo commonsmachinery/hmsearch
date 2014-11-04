@@ -50,6 +50,12 @@ or on stdin:
     ./hm_insert "dbname=test" 6E6FB315FA8C43FE9C2687D5BE14575ABB7252104236747D571B97E003563DF0
     ./hm_insert "dbname=test" < list-of-hashes
 
+Do note that inserting hashes with separate INSERT calls is highly
+inefficient. If you're inserting large amounts of data, you may use
+`hm_printcopy` to generate a file suitable for COPY.
+
+    ./hm_printcopy "dbname=test" 6E6FB315FA8C43FE9C2687D5BE14575ABB7252104236747D571B97E003563DF0 > copy.sql
+    psql -c "\copy hashes from copy.sql delimiter ' '"
 
 Lookup hashes with `hm_insert`, again providing a list of hashes on
 the command line or on stdin:

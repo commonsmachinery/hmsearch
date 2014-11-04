@@ -61,7 +61,10 @@ public:
     
     bool insert(const hash_string& hash,
                 std::string* error_msg = NULL);
-    
+
+    bool print_copystring(const hash_string& hash,
+                std::string* error_msg = NULL);
+
     bool lookup(const hash_string& query,
                 LookupResultList& result,
                 int max_error = -1,
@@ -185,9 +188,6 @@ HmSearch* HmSearch::open(const std::string& path,
     max_error = c[0].as<long>();
     hash_bits = c[1].as<long>();
 
-    /*
-     * Prepare statements for inserts and lookup
-     */
     db.disconnect();
 
     HmSearch* hm = new HmSearchImpl(path, hash_bits, max_error);
@@ -235,7 +235,36 @@ std::string HmSearch::format_hexhash(const HmSearch::hash_string& hash)
 }
 
 
+bool HmSearchImpl::print_copystring(const hash_string& hash,
+                          std::string* error_msg)
+{
+    std::string dummy;
+    if (!error_msg) {
+        error_msg = &dummy;
+    }
+    *error_msg = "";
 
+    if (hash.length() != (size_t) _hash_bytes) {
+        *error_msg = "incorrect hash length";
+        return false;
+    }
+
+    for (int i = 0; i < _partitions; i++) {
+        uint8_t key[_partition_bytes + 2];
+
+        get_partition_key(hash, i, key);
+
+        std::cout << "\\\\x" << format_hexhash(hash)
+                  << " "
+                  << int(i)
+                  << " "
+                  << "\\\\x" << format_hexhash(hash_string(key, _partition_bytes + 2))
+                  << std::endl;
+
+    }
+
+    return true;
+}
 
 bool HmSearchImpl::insert(const hash_string& hash,
                           std::string* error_msg)

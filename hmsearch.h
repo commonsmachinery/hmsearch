@@ -101,6 +101,21 @@ public:
     static std::string format_hexhash(const hash_string& hash);
 
 
+    /** Prints a string suitable for PostgreSQL COPY onto stdout.
+     *
+     * No check is made if the hash already exists in the database,
+     * so this may result in duplicate records.
+     *
+     * Parameters:
+     *  - hash:      The hash to print, as raw bytes
+     *  - error_msg: if provided, will be set to an string describing any
+     *               error, or to an empty string if no error occurred.
+     *
+     * Returns true if the command succeded, false on any error.
+     */
+    virtual bool print_copystring(const hash_string& hash,
+                        std::string* error_msg = NULL) = 0;
+
     /** Insert a hash into the database.
      *
      * No check is made if the hash already exists in the database,
