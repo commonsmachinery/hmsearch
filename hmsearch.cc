@@ -85,7 +85,7 @@ private:
     void get_candidates(const hash_string& query, CandidateMap& candidates);
     void add_hash_candidates(CandidateMap& candidates, int match,
                              const uint8_t* hashes, size_t length);
-    hash_string get_multiple_keys(uint8_t *key);
+    hash_string get_multiple_keys(uint8_t *key, int partition);
     bool valid_candidate(const Candidate& candidate);
     int hamming_distance(const hash_string& query, const hash_string& hash);
     
@@ -142,16 +142,18 @@ bool HmSearch::init(const std::string& path,
 
     W.prepared("hash_max")(hash_bits)(max_error).exec();
 
-    sql = "CREATE TABLE hashes ("\
-          "       hash bytea,"\
-          "       partition int,"\
-          "       key bytea)";
+    for (unsigned int i = 0; i < ((max_error + 3) / 2); i++) {
+        std::stringstream s;
+        s << "CREATE TABLE partition" << i
+          << "       hash bytea,"
+          << "       key bytea)";
+   
+        W.exec(s.str());
+        s.clear();
 
-    W.exec(sql);
-
-    sql = "CREATE INDEX ix_key ON hashes(key)";
-
-    W.exec(sql);
+        s << "CREATE INDEX ix_key_" << i << " ON partition" << i << "(key)";
+        W.exec(s.str());
+    }
 
     W.commit();
 
@@ -250,7 +252,7 @@ bool HmSearchImpl::print_copystring(const hash_string& hash,
     }
 
     for (int i = 0; i < _partitions; i++) {
-        uint8_t key[_partition_bytes + 2];
+        uint8_t key[_partition_bytes];
 
         get_partition_key(hash, i, key);
 
@@ -258,7 +260,7 @@ bool HmSearchImpl::print_copystring(const hash_string& hash,
                   << " "
                   << int(i)
                   << " "
-                  << "\\\\x" << format_hexhash(hash_string(key, _partition_bytes + 2))
+                  << "\\\\x" << format_hexhash(hash_string(key, _partition_bytes))
                   << std::endl;
 
     }
@@ -285,17 +287,22 @@ bool HmSearchImpl::insert(const hash_string& hash,
         return false;
     }
 
-    _db->prepare("insert", "INSERT INTO hashes VALUES ($1, $2, $3)");
+    for (int i = 0; i < _partitions; i++) {
+       std::stringstream s;
+       s << "INSERT INTO partition" << i
+         << "  VALUES ($1, $2)";
+       _db->prepare("insert_"+i, s.str());
+    }
     pqxx::work W(*_db);
     for (int i = 0; i < _partitions; i++) {
-        uint8_t key[_partition_bytes + 2];
+        uint8_t key[_partition_bytes];
 
         get_partition_key(hash, i, key);
 
-        pqxx::binarystring key_blob(key, _partition_bytes + 2);
+        pqxx::binarystring key_blob(key, _partition_bytes);
         pqxx::binarystring hash_blob(hash.data(), hash.length());
 
-        W.prepared("insert")(hash_blob)(i)(key_blob).exec();
+        W.prepared("insert_"+i)(hash_blob)(key_blob).exec();
     }
 
     W.commit();
@@ -363,13 +370,14 @@ bool HmSearchImpl::close(std::string* error_msg)
 
 
 HmSearchImpl::hash_string HmSearchImpl::get_multiple_keys(
-    uint8_t *key)
+    uint8_t *key,
+    int partition)
 {
     hash_string hashes;
 
     pqxx::nontransaction n(*_db);
-    pqxx::binarystring key_blob(key, _partition_bytes + 2);
-    pqxx::result res = n.prepared("select")(key_blob).exec();
+    pqxx::binarystring key_blob(key, _partition_bytes);
+    pqxx::result res = n.prepared("select_"+partition)(key_blob).exec();
 
     for (pqxx::result::const_iterator c = res.begin(); c != res.end(); ++c) {
        pqxx::binarystring hash_result(c[0]);
@@ -383,12 +391,37 @@ void HmSearchImpl::get_candidates(
     const HmSearchImpl::hash_string& query,
     HmSearchImpl::CandidateMap& candidates)
 {
-    uint8_t key[_partition_bytes + 2];
+    uint8_t key[_partition_bytes];
 
-    std::string sql;
-    sql = "SELECT hash FROM hashes WHERE key=$1";
-    _db->prepare("select", sql);
-    
+    for (int i = 0; i < _partitions; i++) {
+        int psize = _hash_bits - i * _partition_bits;
+        if (psize > _partition_bits) {
+            psize = _partition_bits;
+        }
+        std::stringstream single;
+        single << "SELECT hash FROM partition" << i
+               << " WHERE key=$1";
+
+        std::stringstream s;
+        s << "SELECT hash FROM partition"
+          << i
+          << " INNER JOIN (SELECT $1::bytea AS key";
+        for (int j = 2; j <= psize; j++) {
+           s << " UNION ALL SELECT "
+             << "$"
+             << j;
+        }
+        s << ") AS x ON partition"
+          << i
+          << ".key = x.key";
+        std::string sql;
+        sql.append(s.str());
+        _db->prepare("select_multiple_"+i, sql);
+
+        sql.clear();
+        sql.append(single.str());
+        _db->prepare("select_"+i, sql);
+    }
     for (int i = 0; i < _partitions; i++) {
         hash_string hashes;
         
@@ -396,28 +429,32 @@ void HmSearchImpl::get_candidates(
 
         // Get exact matches
 
-        hashes = get_multiple_keys(key);
+        hashes = get_multiple_keys(key, i);
 
         if (hashes.length() > 0) {
             add_hash_candidates(candidates, 0, (const uint8_t*)hashes.data(), hashes.length());
         }
 
         // Get 1-variant matches
-
+        pqxx::nontransaction n(*_db);
+        pqxx::prepare::invocation prep = n.prepared("select_multiple_"+i);
         int pbyte = (i * _partition_bits) / 8;
-        for (int pbit = i * _partition_bits; bits > 0; pbit++, bits--) {
+        int count = 0;
+        for (int pbit = i * _partition_bits; bits > 0; pbit++, bits--, count++) {
             uint8_t flip = 1 << (7 - (pbit % 8));
-
-            key[pbit / 8 - pbyte + 2] ^= flip;
-
-            hash_string hashes;
-            hashes = get_multiple_keys(key);
-            if (hashes.length() > 0) {
-                add_hash_candidates(candidates, 1, (const uint8_t*)hashes.data(), hashes.length());
-            }
-            
-            key[pbit / 8 - pbyte + 2] ^= flip;
+            key[pbit / 8 - pbyte] ^= flip;
+            pqxx::binarystring key_blob(key, _partition_bytes);
+            prep(key_blob);
+            key[pbit / 8 - pbyte] ^= flip;
         }
+        pqxx::result res = prep.exec();
+
+        hashes.clear();
+        for (pqxx::result::const_iterator c = res.begin(); c != res.end(); ++c) {
+            pqxx::binarystring hash_result(c[0]);
+            hashes.append(hash_string(hash_result.data(), hash_result.size()));
+        }
+        add_hash_candidates(candidates, 1, (const uint8_t*)hashes.data(), hashes.length());
     }
 }
 
@@ -487,10 +524,6 @@ int HmSearchImpl::get_partition_key(const hash_string& hash, int partition, uint
         psize = _partition_bits;
     }
 
-    // Store key partition number first
-    key[0] = 'P';
-    key[1] = partition;
-
     // Copy bytes, masking out some bits at the start and end
     bits_left = psize;
     hash_bit = partition * _partition_bits;
@@ -507,7 +540,7 @@ int HmSearchImpl::get_partition_key(const hash_string& hash, int partition, uint
         bits_left -= bits;
         hash_bit += bits;
 
-        key[i + 2] = hash[byte] & (((1 << bits) - 1) << (8 - bit - bits));
+        key[i] = hash[byte] & (((1 << bits) - 1) << (8 - bit - bits));
     }
 
     return psize;
