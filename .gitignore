@@ -24,5 +24,6 @@ hm_dump
 hm_initdb
 hm_insert
 hm_lookup
+hm_printcopy
 
 *~

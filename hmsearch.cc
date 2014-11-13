@@ -135,24 +135,33 @@ bool HmSearch::init(const std::string& path,
     db.prepare("hash_max", sql);
 
     pqxx::work W(db);
-    sql = "CREATE TABLE config ("\
+    sql = "CREATE TABLE IF NOT EXISTS config ("\
           "       hash_bits int,"\
-          "       max_error int)";
+          "       max_error int); TRUNCATE config";
     W.exec(sql);
 
     W.prepared("hash_max")(hash_bits)(max_error).exec();
 
     for (unsigned int i = 0; i < ((max_error + 3) / 2); i++) {
-        std::stringstream s;
-        s << "CREATE TABLE partition" << i
-          << "       hash bytea,"
-          << "       key bytea)";
-   
-        W.exec(s.str());
-        s.clear();
+        {
+            std::stringstream s;
+            s << "CREATE TABLE IF NOT EXISTS partition" << i << " ("
+              << "       hash bytea,"
+              << "       key bytea); TRUNCATE partition" << i;
+            W.exec(s.str());
+        }
 
-        s << "CREATE INDEX ix_key_" << i << " ON partition" << i << "(key)";
-        W.exec(s.str());
+        {
+            std::stringstream s;
+            s << "DROP INDEX IF EXISTS ix_key_" << i;
+            W.exec(s.str());
+        }
+
+        {
+            std::stringstream s;
+            s << "CREATE INDEX ix_key_" << i << " ON partition" << i << "(key)";
+            W.exec(s.str());
+        }
     }
 
     W.commit();
