@@ -176,38 +176,42 @@ HmSearch* HmSearch::open(const std::string& path,
                          std::string* error_msg)
 {
     std::string dummy;
+
     if (!error_msg) {
         error_msg = &dummy;
     }
     *error_msg = "";
 
-    pqxx::connection db(path);
-    if (!db.is_open()) {
-        *error_msg = "Can't open database";
+    try {
+        pqxx::connection db(path);
+
+        std::string sql;
+
+        sql = "SELECT max_error, hash_bits FROM config";
+        pqxx::nontransaction n(db);
+        pqxx::result res(n.exec(sql));
+
+        pqxx::result::const_iterator c = res.begin(); // We retrieve just one row
+
+        unsigned long hash_bits, max_error;
+        max_error = c[0].as<long>();
+        hash_bits = c[1].as<long>();
+
+        db.disconnect();
+
+        HmSearch* hm = new HmSearchImpl(path, hash_bits, max_error);
+        if (!hm) {
+            *error_msg = "out of memory";
+            return NULL;
+        }
+
+        return hm;
+
+    }
+    catch (const pqxx::broken_connection& e) {
+        *error_msg = e.what();
         return NULL;
     }
-
-    std::string sql;
-
-    sql = "SELECT max_error, hash_bits FROM config";
-    pqxx::nontransaction n(db);
-    pqxx::result res(n.exec(sql));
-
-    pqxx::result::const_iterator c = res.begin(); // We retrieve just one row
-
-    unsigned long hash_bits, max_error;
-    max_error = c[0].as<long>();
-    hash_bits = c[1].as<long>();
-
-    db.disconnect();
-
-    HmSearch* hm = new HmSearchImpl(path, hash_bits, max_error);
-    if (!hm) {
-        *error_msg = "out of memory";
-        return NULL;
-    }
-
-    return hm;
 }
 
 
@@ -341,18 +345,24 @@ bool HmSearchImpl::lookup(const hash_string& query,
         return false;
     }
 
-    CandidateMap candidates;
-    get_candidates(query, candidates);
+    try {
+        CandidateMap candidates;
+        get_candidates(query, candidates);
 
-    for (CandidateMap::const_iterator i = candidates.begin(); i != candidates.end(); ++i) {
-        if (valid_candidate(i->second)) {
-            int distance = hamming_distance(query, i->first);
+        for (CandidateMap::const_iterator i = candidates.begin(); i != candidates.end(); ++i) {
+            if (valid_candidate(i->second)) {
+                int distance = hamming_distance(query, i->first);
 
-            if (distance <= _max_error
-                && (reduced_error < 0 || distance <= reduced_error)) {
-                result.push_back(LookupResult(i->first, distance));
+                if (distance <= _max_error
+                    && (reduced_error < 0 || distance <= reduced_error)) {
+                    result.push_back(LookupResult(i->first, distance));
+                }
             }
         }
+    }
+    catch (const pqxx::pqxx_exception &e) {
+        *error_msg = e.base().what();
+        return false;
     }
 
     return true;
