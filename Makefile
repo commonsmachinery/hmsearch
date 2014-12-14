@@ -1,7 +1,7 @@
 
 CC = gcc
 CXX = g++
-CFLAGS = -g -Wall -D_FILE_OFFSET_BITS=64
+CFLAGS = -g -Wall -Wstring-plus-int -D_FILE_OFFSET_BITS=64
 CXXFLAGS = $(CFLAGS)
 LDFLAGS = -g
 LIBS = -lm -lpqxx
