@@ -411,6 +411,7 @@ void HmSearchImpl::get_candidates(
     HmSearchImpl::CandidateMap& candidates)
 {
     uint8_t key[_partition_bytes];
+    memset(key, 0, _partition_bytes);
 
     for (int i = 0; i < _partitions; i++) {
         int psize = _hash_bits - i * _partition_bits;
