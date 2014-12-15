@@ -304,7 +304,7 @@ bool HmSearchImpl::insert(const hash_string& hash,
        std::stringstream s;
        s << "INSERT INTO partition" << i
          << "  VALUES ($1, $2)";
-       _db->prepare("insert_"+i, s.str());
+       _db->prepare("insert_"+std::to_string(i), s.str());
     }
     pqxx::work W(*_db);
     for (int i = 0; i < _partitions; i++) {
@@ -315,7 +315,7 @@ bool HmSearchImpl::insert(const hash_string& hash,
         pqxx::binarystring key_blob(key, _partition_bytes);
         pqxx::binarystring hash_blob(hash.data(), hash.length());
 
-        W.prepared("insert_"+i)(hash_blob)(key_blob).exec();
+        W.prepared("insert_"+std::to_string(i))(hash_blob)(key_blob).exec();
     }
 
     W.commit();
@@ -396,7 +396,7 @@ HmSearchImpl::hash_string HmSearchImpl::get_multiple_keys(
 
     pqxx::nontransaction n(*_db);
     pqxx::binarystring key_blob(key, _partition_bytes);
-    pqxx::result res = n.prepared("select_"+partition)(key_blob).exec();
+    pqxx::result res = n.prepared("select_"+std::to_string(partition))(key_blob).exec();
 
     for (pqxx::result::const_iterator c = res.begin(); c != res.end(); ++c) {
        pqxx::binarystring hash_result(c[0]);
@@ -435,11 +435,11 @@ void HmSearchImpl::get_candidates(
           << ".key = x.key";
         std::string sql;
         sql.append(s.str());
-        _db->prepare("select_multiple_"+i, sql);
+        _db->prepare("select_multiple_"+std::to_string(i), sql);
 
         sql.clear();
         sql.append(single.str());
-        _db->prepare("select_"+i, sql);
+        _db->prepare("select_"+std::to_string(i), sql);
     }
     for (int i = 0; i < _partitions; i++) {
         hash_string hashes;
@@ -456,7 +456,7 @@ void HmSearchImpl::get_candidates(
 
         // Get 1-variant matches
         pqxx::nontransaction n(*_db);
-        pqxx::prepare::invocation prep = n.prepared("select_multiple_"+i);
+        pqxx::prepare::invocation prep = n.prepared("select_multiple_"+std::to_string(i));
         int pbyte = (i * _partition_bits) / 8;
         int count = 0;
         for (int pbit = i * _partition_bits; bits > 0; pbit++, bits--, count++) {
