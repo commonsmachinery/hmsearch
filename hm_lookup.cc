@@ -62,6 +62,7 @@ int main(int argc, char **argv)
                  ++i) {
                 std::cout << HmSearch::format_hexhash(i->hash) << " " << i->distance << std::endl;
             }
+            std::cout << std::endl;
         }
     }
 
